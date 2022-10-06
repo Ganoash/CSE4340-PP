@@ -49,6 +49,8 @@ class SR_Model:
             f_x_i = pyro.sample("f_x_i", dist.Normal(y_i, 5))
             condition(f_x_i, data={"f_x_i": f(x_i)})
 
+        return e[1]
+
     @classmethod
     def create_from_file(cls, filename):
         pairs = []
