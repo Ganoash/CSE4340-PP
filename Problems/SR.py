@@ -8,8 +8,7 @@ import pyro
 
 class SR_Model:
 
-    def __init__(self, pairs):
-        self.pairs = pairs
+    def __init__(self):
         self.plus = lambda a, b: a + b, '+'
         self.multiply = lambda a, b: round(a*b,0), '*'
         self.divide = lambda a, b: round(a/b, 0), '/'
@@ -19,11 +18,19 @@ class SR_Model:
         self.identity = lambda x: x, 'x'
 
     def randomConstantFunction(self):
-        c = pyro.sample("c", dist.Multinomial(1, torch.from_numpy(np.arange(10))))
-        return lambda x: c, c
+        tensor = pyro.sample("c", dist.Multinomial(1, torch.from_numpy(np.arange(10))))
+        c = 0
+        for i in range(10):
+            if tensor[i] == 1:
+                c = i
+        return lambda x: c, str(c)
 
     def randomCombination(self, f, g):
-        index = pyro.sample("binaryOps", dist.Multinomial(1, torch.from_numpy(np.arange(5))))
+        tensor = pyro.sample("binaryOps", dist.Multinomial(1, torch.from_numpy(np.arange(5))))
+        index = 0
+        for i in range(5):
+            if tensor[i] == 1:
+                index = i
         op = self.binaryOps[index]
         opfn = op[0]
         ffn = f[0]
@@ -41,27 +48,36 @@ class SR_Model:
                 return self.randomConstantFunction()
 
     # Not sure how the last 4 lines of the model should be translated, this is how I do it (for now)
-    def run(self):
+    def run(self, data_y, data_x=None ):
         e = self.randomArithmeticExpression()
         f = e[0]
 
-        for (x_i, y_i) in self.pairs:
-            f_x_i = pyro.sample("f_x_i", dist.Normal(y_i, 5))
-            condition(f_x_i, data={"f_x_i": f(x_i)})
+        for i in range(len(data_x)):
+            func = f(data_x[i])
+            pyro.sample('f_{}'.format(i), dist.Normal(data_y[i], 5), obs=func)
 
+        print(e)
+        print(e[1])
         return e[1]
 
     @classmethod
     def create_from_file(cls, filename):
-        pairs = []
+        data_x = []
+        data_y = []
         file = open(filename, 'r')
         lines = file.readlines()
 
         for line in lines:
             pair = line.split(" ")
-            x = pair[0]
-            y = pair[1]
+            x = int(pair[0])
+            y = int(pair[1])
 
-            pairs.append((int(x), int(y)))
+            data_x.append(x)
+            data_y.append(y)
 
-        return SR_Model(pairs)
+        return data_x, data_y
+
+
+data_x, data_y = SR_Model.create_from_file("../data/sir.data")
+sr = SR_Model()
+sr.run(data_y, data_x)
