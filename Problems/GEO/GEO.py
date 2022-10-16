@@ -1,13 +1,21 @@
+import utils
+
+import pyro.distributions as dist
+import pyro.primitives as prim
+
+
 class GeoModel:
     def __init__(self, heads, reference_times, observed_deformations):
         # initializations
-        
         # sampling
         self.draw()
 
     def draw(self):
-        pass
-        # sampling
+        kv = prim.sample(name="kv", fn=dist.Cauchy(loc=-5, scale=3))
+        sskv = prim.sample(name="sskv", fn=dist.Cauchy(loc=-3.5, scale=3))
+        sske = prim.sample(name="sske", fn=dist.Cauchy(loc=-5, scale=3))
+        nclay = utils.sample_from_discrete_uniform(name="nclay",
+                                                   values=list(range(5, 11)))
 
     def run(self):
         pass
