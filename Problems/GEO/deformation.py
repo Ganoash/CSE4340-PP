@@ -24,9 +24,8 @@ def calc_deformation(time: list, head: list, Kv: float, Sskv: float,
             layer modeled. Higher Nz requires higher dt, and vice versa
 
     Returns:
-        (list, list, list): The interpolated time, total
-            surface deformation, interpolated head, and inelastic surface
-            deformation.
+        (list, list, list, list): The interpolated time, total surface
+            deformation, interpolated head, and inelastic surface deformation.
     """
     Sske_sand_mult = 0.5  # assuem sand sske
     Sske_sand = Sske*Sske_sand_mult
