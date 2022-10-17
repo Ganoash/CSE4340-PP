@@ -1,4 +1,6 @@
+from Problems.GEO.deformation import calc_deformation
 import utils
+import numpy
 
 import pyro.distributions as dist
 import pyro.primitives as prim
@@ -7,15 +9,29 @@ import pyro.primitives as prim
 class GeoModel:
     def __init__(self, heads, reference_times, observed_deformations):
         # initializations
-        # sampling
-        self.draw()
+        self.heads = heads
+        self.reference_times = reference_times
+        self.observed_deformations = observed_deformations
 
-    def draw(self):
+    def model(self):
         kv = prim.sample(name="kv", fn=dist.Cauchy(loc=-5, scale=3))
         sskv = prim.sample(name="sskv", fn=dist.Cauchy(loc=-3.5, scale=3))
         sske = prim.sample(name="sske", fn=dist.Cauchy(loc=-5, scale=3))
         nclay = utils.sample_from_discrete_uniform(name="nclay",
                                                    values=list(range(5, 11)))
+        claythick = 5
+        interp_times, defm, heads, defm_v = calc_deformation(
+            time=self.reference_times, head=self.heads, Kv=10**kv,
+            Sskv=10**sskv, Sske=10**sske, claythick=claythick,
+            nclay=nclay)
+
+        aligned_deformation = numpy.interp(self.reference_times,
+                                           interp_times, defm)
+
+        prim.sample(name="data", fn=dist.Normal(self.observed_deformations, 2),
+                    obs=aligned_deformation)
+
+        return kv, sskv, sske, nclay
 
     def run(self):
         pass
