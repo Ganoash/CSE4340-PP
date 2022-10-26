@@ -1,88 +1,140 @@
-import numpy as np
-import pyro.distributions as dist
-import pyro.primitives as prim
-from pyro import condition
 import torch
+import numpy as np
+import pyro
+import pyro.distributions as dist
+from pyro.contrib.epidemiology import CompartmentalModel, binomial_dist, infection_dist
 
+class SIRModel(CompartmentalModel):
 
-class Sir_Model:
-
-    def __init__(self, observations, time_steps=60, population_size=600, s_0=599, i_0=1, beta_0=1):
-        self.time_steps = time_steps
-        self.current_time_step = 0
-        self.population_size = population_size
-        self.s_0 = s_0
-        self.i_0 = i_0
-        self.observations = [i_0] + observations
+    def __init__(self, T, population, S_0, I_0, beta_0, data):
+        compartments = ("S", "I", "beta")
+        super().__init__(compartments, T, population)
+        self.S_0 = S_0
+        self.I_0 = I_0
         self.beta_0 = beta_0
-        self.s_t = [s_0]
-        self.i_t = [i_0]
-        self.beta_t = [beta_0]
-        self.tau = None
-        self.R0 = None
-        self.rho0 = None
-        self.rho1 = None
-        self.rho2 = None
-        self.switch_to_rho_1 = None
-        self.switch_to_rho_2 = None
-        self.draw()
+        self.data = data
 
-    def draw(self):
-        self.tau = prim.sample("tau", dist.Multinomial(1, torch.from_numpy(np.ones(8))))
-        self.tau = (self.tau == 1).nonzero().squeeze() + 2
-        self.R0 = prim.sample("R0", dist.LogNormal(0.0, 1.0))
+    def global_model(self):
+        tau = pyro.sample("tau", dist.Categorical(torch.ones(8)))
+        tau = pyro.deterministic("tau_value", tau + 2)
 
-        self.rho0 = prim.sample("rho0", dist.Beta(2, 4))
-        self.rho1 = prim.sample("rho1", dist.Beta(4, 4))
-        self.rho2 = prim.sample("rho2", dist.Beta(8, 4))
+        R0 = pyro.sample("R0", dist.LogNormal(0., 1.))
 
-        self.switch_to_rho_1 = prim.sample("st_rho1", dist.Uniform(15, 40))
-        self.switch_to_rho_2 = prim.sample("st_rho2", dist.Uniform(30, 60))
+        rho0 = pyro.sample("rho0", dist.Beta(2, 4))
+        rho1 = pyro.sample("rho1", dist.Beta(4, 4))
+        rho2 = pyro.sample("rho2", dist.Beta(8, 4))
 
-    def run_timestep(self):
-        beta_t = prim.sample("beta_t", dist.LogNormal(0.1, self.beta_t[self.current_time_step]))
-        self.beta_t.append(beta_t)
-        RT = beta_t * self.R0
-        print(f"beta_t-1: {self.beta_t[self.current_time_step]}")
-        print(f"beta_t: {beta_t}")
+        switch_to_rho_1 = pyro.sample("switch_to_rho_1", dist.Uniform(15, 40))
+        switch_to_rho_2 = pyro.sample("switch_to_rho_2", dist.Uniform(30, 60))
 
-        individual_rate = RT / self.tau
-        print(f"RT: {RT}")
-        print(f"tau: {self.tau}")
-        print(f"individual_rate: {individual_rate}")
-        p = individual_rate / self.population_size
-        print(f"p: {p}")
-        combined_p = 1 - ((1 - p) ** self.i_t[self.current_time_step])
-        print(f"i_t: {self.i_t[self.current_time_step]}")
-        print(f"combined_p: {combined_p}")
-        s2i = prim.sample("s2i", dist.Binomial(self.s_t[self.current_time_step], probs=torch.from_numpy(np.array([1-combined_p, combined_p]))))[1]
-        i2r = prim.sample("i2r", dist.Binomial(self.i_t[self.current_time_step], probs=torch.from_numpy(np.array([1-(1/self.tau), (1/self.tau)]))))[1]
+        st0 = lambda t: switch_to_rho_1 < t
+        st2 = lambda t: switch_to_rho_2 >= t
+        st1 = lambda t: ~st0(t)&~st2(t)
 
-        print(f"s2i: {s2i}")
-        print(f"i2r: {i2r}")
-        self.s_t.append(self.s_t[self.current_time_step] - s2i)
-        self.i_t.append(self.i_t[self.current_time_step] - i2r + s2i)
+        rho_t = lambda t: torch.add(torch.add(torch.where(st0(t), rho0, 0), torch.where(st1(t), rho1, 0)), torch.where(st2(t), rho2, 0))
+        if len(rho0.size()) > 0:
+            rho = torch.cat([rho_t(t) for t in range(60)], 0)
+        else:
+            rho = torch.stack([rho_t(t) for t in range(60)], 0)
+        return tau, R0, rho
 
-        rho_to_use = self.rho2 if self.current_time_step >= self.switch_to_rho_2 else (self.rho1 if self.current_time_step > self.switch_to_rho_1 else self.rho0)
-        self.current_time_step += 1
-        o_t = prim.sample("observed sick", dist.Binomial(s2i, rho_to_use))
-        return o_t
+    def initialize(self, params):
+        return {"S": self.S_0, "I": self.I_0, "beta": self.beta_0}
 
-    def run(self):
-        while self.current_time_step != self.time_steps:
-            conditioned = condition(self.run_timestep, data={"observed sick": self.observations[self.current_time_step]})
-            print(prim.sample("cond", conditioned))
+    def compute_flows(self, prev, curr, t):
+        S2I = prev["S"] - curr["S"]
+        I2R = prev["I"] - curr["I"] + S2I
+        beta = curr["beta"]
 
-    @classmethod
-    def create_from_file(cls, file_location):
-        observations = []
-        with open(file_location) as f:
-            lines = f.readlines()
-            lines = [line.rstrip() for line in lines]
-        for line in lines:
-            obs = int(line.split(" ")[1])
-            observations.append(obs)
-        return Sir_Model(observations, time_steps=len(observations))
+        return {
+            "S2I_{}".format(t): S2I,
+            "I2R_{}".format(t): I2R,
+            "BETA_{}".format(t): beta,
+        }
 
-sir = Sir_Model.create_from_file("../data/sir.data")
-sir.run()
+    def transition(self, params, state, t):
+        tau, R0, rho = params
+        beta = pyro.sample("BETA_{}".format(t),
+                           dist.LogNormal(state["beta"].log(), 0.1))
+        Rt = pyro.deterministic("Rt_{}".format(t), R0 * beta)
+        # Rt = Rt.expand(tau.size())
+        p = pyro.deterministic("ir_{}".format(t), (Rt/tau)/self.population)
+
+        combined_p = pyro.deterministic("combined_p_{}".format(t), 1 - (1-p)**state["I"])
+
+        print(state["S"].type(torch.long))
+        print(combined_p.size())
+        S2I = pyro.sample("S2I_{}".format(t),
+                          dist.Binomial(state["S"].type(torch.long), combined_p))
+        I2R = pyro.sample("I2R_{}".format(t),
+                          dist.Binomial(state["I"].type(torch.long), 1/tau))
+
+        state["S"] = state["S"] - S2I
+        state["I"] = state["I"] + S2I - I2R
+        state["beta"] = beta
+
+        t_is_observed = isinstance(t, slice) or t < self.duration
+        pyro.sample("obs_{}".format(t),
+                    binomial_dist(S2I, rho[t]),
+                    obs=self.data[t] if t_is_observed else None)
+
+def model(params):
+    S, I, beta, data = params
+
+    tau = pyro.sample("tau", dist.Categorical(torch.ones(8)), infer={"enumerate":"parallel"})
+    tau = tau.squeeze() + 2
+    R0 = pyro.sample("R0", dist.LogNormal(0., 1.))
+
+    rho0 = pyro.sample("rho0", dist.Beta(2, 4))
+    rho1 = pyro.sample("rho1", dist.Beta(4, 4))
+    rho2 = pyro.sample("rho2", dist.Beta(8, 4))
+
+    switch_to_rho_1 = pyro.sample("switch_to_rho_1", dist.Uniform(15, 40))
+    switch_to_rho_2 = pyro.sample("switch_to_rho_2", dist.Uniform(30, 60))
+
+    t = 0
+
+    for t, y in pyro.markov(enumerate(data)):
+        beta = pyro.sample("beta_t_{}".format(t),
+                           dist.LogNormal(beta.log(), 0.1))
+        Rt = pyro.deterministic("Rt_{}".format(t), R0 * beta)
+        p = pyro.deterministic("ir_{}".format(t), (Rt / tau) / self.population)
+
+        combined_p = pyro.deterministic("combined_p_{}".format(t), 1 - (1 - p) ** state["I"])
+
+        S2I = pyro.sample("s2i_{}".format(t),
+                          dist.Binomial(S, combined_p))
+        I2R = pyro.sample("i2r_{}".format(t),
+                          dist.Binomial(I, 1 / tau))
+
+        S = S - S2I
+        I = I + S2I - I2R
+
+        rho = rho2 if t > switch_to_rho_2 else rho1 if t > switch_to_rho_1 else rho0
+        pyro.sample("obs_{}".format(t),
+                    binomial_dist(S2I, rho),
+                    obs=y)
+
+""""                    obs=y)
+@easy_guide(model)
+def guide(self, params):
+    self.map_estimate("tau")
+
+"""
+
+if __name__ == '__main__':
+    data = []
+    with open("../data/run.data") as f:
+        for line in f.readlines():
+            measured_infected = float(line.strip().split(" ")[1])
+            data.append(measured_infected)
+    data = torch.tensor(data)
+    model = SIRModel(60, 600, torch.tensor([599], dtype=torch.long), torch.tensor([1], dtype=torch.long), torch.tensor(1.), data)
+    model.fit_mcmc()
+    
+    
+
+
+
+
+
