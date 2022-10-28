@@ -1,140 +1,112 @@
 import torch
 import numpy as np
 import pyro
+import pyro.primitives as prim
+from pyro.infer.discrete import TraceEnumSample_ELBO, TraceEnum_ELBO
+from pyro.infer import config_enumerate, infer_discrete
+from pyro.infer.mcmc.nuts import NUTS
+from pyro.infer.mcmc import MCMC
 import pyro.distributions as dist
 from pyro.contrib.epidemiology import CompartmentalModel, binomial_dist, infection_dist
 
-class SIRModel(CompartmentalModel):
+class Sir_Model:
 
-    def __init__(self, T, population, S_0, I_0, beta_0, data):
-        compartments = ("S", "I", "beta")
-        super().__init__(compartments, T, population)
-        self.S_0 = S_0
-        self.I_0 = I_0
+    def __init__(self, observations, time_steps=60, population_size=600, s_0=torch.tensor(599), i_0=torch.tensor(1), beta_0=torch.tensor(1)):
+        self.time_steps = time_steps
+        self.current_time_step = 0
+        self.population_size = population_size
+        self.s_0 = s_0
+        self.i_0 = i_0
+        self.observations = [i_0] + observations
         self.beta_0 = beta_0
-        self.data = data
+        self.s_t = [s_0]
+        self.i_t = [i_0]
+        self.beta_t = [beta_0]
+        self.tau = None
+        self.R0 = None
+        self.rho0 = None
+        self.rho1 = None
+        self.rho2 = None
+        self.switch_to_rho_1 = None
+        self.switch_to_rho_2 = None
 
-    def global_model(self):
-        tau = pyro.sample("tau", dist.Categorical(torch.ones(8)))
-        tau = pyro.deterministic("tau_value", tau + 2)
+    @config_enumerate
+    def run(self):
+        self.tau = prim.sample("tau", dist.Categorical(torch.from_numpy(np.ones(8))))
+        self.tau = self.tau.squeeze() + 2
+        self.R0 = prim.sample("R0", dist.LogNormal(0.0, 1.0))
 
-        R0 = pyro.sample("R0", dist.LogNormal(0., 1.))
+        self.rho0 = prim.sample("rho0", dist.Beta(2, 4))
+        self.rho1 = prim.sample("rho1", dist.Beta(4, 4))
+        self.rho2 = prim.sample("rho2", dist.Beta(8, 4))
 
-        rho0 = pyro.sample("rho0", dist.Beta(2, 4))
-        rho1 = pyro.sample("rho1", dist.Beta(4, 4))
-        rho2 = pyro.sample("rho2", dist.Beta(8, 4))
+        self.switch_to_rho_1 = prim.sample("st_rho1", dist.Uniform(15, 40))
+        self.switch_to_rho_2 = prim.sample("st_rho2", dist.Uniform(30, 60))
 
-        switch_to_rho_1 = pyro.sample("switch_to_rho_1", dist.Uniform(15, 40))
-        switch_to_rho_2 = pyro.sample("switch_to_rho_2", dist.Uniform(30, 60))
+        self.current_time_step = 0
+        for _ in pyro.markov(range(self.time_steps)):
+            beta_t = prim.sample(f"beta_{self.current_time_step}",
+                                 dist.LogNormal(self.beta_t[self.current_time_step].log(), 0.1))
+            self.beta_t.append(beta_t)
+            RT = beta_t * self.R0
 
-        st0 = lambda t: switch_to_rho_1 < t
-        st2 = lambda t: switch_to_rho_2 >= t
-        st1 = lambda t: ~st0(t)&~st2(t)
+            individual_rate = RT / self.tau
+            # print(f"RT: {RT}")
+            # print(f"tau: {self.tau}")
+            # print(f"individual_rate: {individual_rate}")
+            p = individual_rate / self.population_size
+            # print(f"p: {p}")
+            combined_p = 1 - ((1 - p) ** self.i_t[self.current_time_step])
+            # print(f"i_t: {self.i_t[self.current_time_step]}")
+            # print(f"combined_p: {combined_p}")
 
-        rho_t = lambda t: torch.add(torch.add(torch.where(st0(t), rho0, 0), torch.where(st1(t), rho1, 0)), torch.where(st2(t), rho2, 0))
-        if len(rho0.size()) > 0:
-            rho = torch.cat([rho_t(t) for t in range(60)], 0)
-        else:
-            rho = torch.stack([rho_t(t) for t in range(60)], 0)
-        return tau, R0, rho
+            s2i = prim.sample(f"s2i_{self.current_time_step}",
+                              dist.ExtendedBinomial(torch.tensor(self.s_t[self.current_time_step], dtype=torch.float),
+                                                    combined_p))
+            i2r = prim.sample(f"i2r_{self.current_time_step}",
+                              dist.ExtendedBinomial(torch.tensor(self.i_t[self.current_time_step], dtype=torch.float),
+                                                    (1 / self.tau)))
+            # print(f"s2i: {s2i}")
+            # print(f"i2r: {i2r}")
+            self.s_t.append(self.s_t[self.current_time_step] - s2i)
+            self.i_t.append(self.i_t[self.current_time_step] - i2r + s2i)
 
-    def initialize(self, params):
-        return {"S": self.S_0, "I": self.I_0, "beta": self.beta_0}
+            rho_to_use = self.rho2 if self.current_time_step >= self.switch_to_rho_2 else (
+                self.rho1 if self.current_time_step > self.switch_to_rho_1 else self.rho0)
+            self.current_time_step += 1
+            o_t = prim.sample(f"observed sick_{self.current_time_step}",
+                              dist.ExtendedBinomial(torch.tensor(s2i, dtype=torch.float), rho_to_use),
+                              obs=torch.tensor(self.observations[self.current_time_step], dtype=torch.float))
 
-    def compute_flows(self, prev, curr, t):
-        S2I = prev["S"] - curr["S"]
-        I2R = prev["I"] - curr["I"] + S2I
-        beta = curr["beta"]
+    @classmethod
+    def create_from_file(cls, file_location):
+        observations = []
+        with open(file_location) as f:
+            lines = f.readlines()
+            lines = [line.rstrip() for line in lines]
+        for line in lines:
+            obs = float(line.split(" ")[1])
+            observations.append(obs)
+        return Sir_Model(observations, time_steps=len(observations))
 
-        return {
-            "S2I_{}".format(t): S2I,
-            "I2R_{}".format(t): I2R,
-            "BETA_{}".format(t): beta,
-        }
+sir = Sir_Model.create_from_file("../data/run.data")
+torch.set_default_dtype(torch.float64)
+auto_guide = pyro.infer.autoguide.AutoDelta(
+    pyro.poutine.block(sir.run, hide=["tau"] + [f"s2i_{t}" for t in range(60)] + [f"i2r_{t}" for t in range(60)]))
+adam = pyro.optim.Adam({"lr": 0.05})  # Consider decreasing learning rate.
+elbo = TraceEnum_ELBO()
+elbo.loss(sir.run, auto_guide)
+svi = pyro.infer.SVI(sir.run, auto_guide, adam, loss=elbo)
 
-    def transition(self, params, state, t):
-        tau, R0, rho = params
-        beta = pyro.sample("BETA_{}".format(t),
-                           dist.LogNormal(state["beta"].log(), 0.1))
-        Rt = pyro.deterministic("Rt_{}".format(t), R0 * beta)
-        # Rt = Rt.expand(tau.size())
-        p = pyro.deterministic("ir_{}".format(t), (Rt/tau)/self.population)
+losses = []
+for step in range(200):
+    loss = svi.step()
+    losses.append(loss)
+    if step % 100 == 0:
+        print("Elbo loss: {}".format(loss))
 
-        combined_p = pyro.deterministic("combined_p_{}".format(t), 1 - (1-p)**state["I"])
-
-        print(state["S"].type(torch.long))
-        print(combined_p.size())
-        S2I = pyro.sample("S2I_{}".format(t),
-                          dist.Binomial(state["S"].type(torch.long), combined_p))
-        I2R = pyro.sample("I2R_{}".format(t),
-                          dist.Binomial(state["I"].type(torch.long), 1/tau))
-
-        state["S"] = state["S"] - S2I
-        state["I"] = state["I"] + S2I - I2R
-        state["beta"] = beta
-
-        t_is_observed = isinstance(t, slice) or t < self.duration
-        pyro.sample("obs_{}".format(t),
-                    binomial_dist(S2I, rho[t]),
-                    obs=self.data[t] if t_is_observed else None)
-
-def model(params):
-    S, I, beta, data = params
-
-    tau = pyro.sample("tau", dist.Categorical(torch.ones(8)), infer={"enumerate":"parallel"})
-    tau = tau.squeeze() + 2
-    R0 = pyro.sample("R0", dist.LogNormal(0., 1.))
-
-    rho0 = pyro.sample("rho0", dist.Beta(2, 4))
-    rho1 = pyro.sample("rho1", dist.Beta(4, 4))
-    rho2 = pyro.sample("rho2", dist.Beta(8, 4))
-
-    switch_to_rho_1 = pyro.sample("switch_to_rho_1", dist.Uniform(15, 40))
-    switch_to_rho_2 = pyro.sample("switch_to_rho_2", dist.Uniform(30, 60))
-
-    t = 0
-
-    for t, y in pyro.markov(enumerate(data)):
-        beta = pyro.sample("beta_t_{}".format(t),
-                           dist.LogNormal(beta.log(), 0.1))
-        Rt = pyro.deterministic("Rt_{}".format(t), R0 * beta)
-        p = pyro.deterministic("ir_{}".format(t), (Rt / tau) / self.population)
-
-        combined_p = pyro.deterministic("combined_p_{}".format(t), 1 - (1 - p) ** state["I"])
-
-        S2I = pyro.sample("s2i_{}".format(t),
-                          dist.Binomial(S, combined_p))
-        I2R = pyro.sample("i2r_{}".format(t),
-                          dist.Binomial(I, 1 / tau))
-
-        S = S - S2I
-        I = I + S2I - I2R
-
-        rho = rho2 if t > switch_to_rho_2 else rho1 if t > switch_to_rho_1 else rho0
-        pyro.sample("obs_{}".format(t),
-                    binomial_dist(S2I, rho),
-                    obs=y)
-
-""""                    obs=y)
-@easy_guide(model)
-def guide(self, params):
-    self.map_estimate("tau")
-
-"""
-
-if __name__ == '__main__':
-    data = []
-    with open("../data/run.data") as f:
-        for line in f.readlines():
-            measured_infected = float(line.strip().split(" ")[1])
-            data.append(measured_infected)
-    data = torch.tensor(data)
-    model = SIRModel(60, 600, torch.tensor([599], dtype=torch.long), torch.tensor([1], dtype=torch.long), torch.tensor(1.), data)
-    model.fit_mcmc()
-    
-    
-
-
-
-
-
+predictive = pyro.infer.Predictive(sir.run, guide=auto_guide, num_samples=100)
+tau_guess = predictive()["tau"].mode()[0] + 2
+print(tau_guess)
+print(losses)
+print(auto_guide.median())
