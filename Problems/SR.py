@@ -1,14 +1,16 @@
 import numpy as np
 import pyro.distributions as dist
-from pyro import condition
 import torch
 import math
 import pyro
+from pyro.contrib.autoname import name_count
+import logging
+import pyro.primitives as prim
 
 
 class SR_Model:
 
-    def __init__(self):
+    def __init__(self, data):
         self.plus = lambda a, b: a + b, '+'
         self.multiply = lambda a, b: round(a*b,0), '*'
         self.divide = lambda a, b: round(a/b, 0), '/'
@@ -16,7 +18,9 @@ class SR_Model:
         self.power = lambda a, b: math.pow(a,b), '**'
         self.binaryOps = [self.plus, self.multiply, self.divide, self.minus, self.power]
         self.identity = lambda x: x, 'x'
+        self.data = data
 
+    @name_count
     def randomConstantFunction(self):
         tensor = pyro.sample("c", dist.Multinomial(1, torch.from_numpy(np.arange(10))))
         c = 0
@@ -36,25 +40,28 @@ class SR_Model:
         ffn = f[0]
         gfn = g[0]
 
-        return lambda x: opfn(ffn(x), gfn(x)), f[1] + op[1] + g[1]
+        return lambda x: opfn(ffn(x), gfn(x)), "(" + op[1] + " " + f[1] + " " + g[1] + ")"
 
     def randomArithmeticExpression(self):
-        if pyro.sample("d1", dist.Bernoulli(0.5)):
-            return self.randomCombination(self.randomArithmeticExpression(), self.randomArithmeticExpression())
-        else:
-            if pyro.sample("d2", dist.Bernoulli(0.5)):
-                return self.identity
+        with name_count():
+            d1 = pyro.sample('d1', dist.Bernoulli(probs=torch.tensor([0.5])))
+            if d1 == 1:
+                return self.randomCombination(self.randomArithmeticExpression(), self.randomArithmeticExpression())
             else:
-                return self.randomConstantFunction()
+                d2 = pyro.sample('d2', dist.Bernoulli(probs=torch.tensor([0.5])))
+                if d2 == 1:
+                    return self.identity
+                else:
+                    return self.randomConstantFunction()
 
-    # Not sure how the last 4 lines of the model should be translated, this is how I do it (for now)
-    def run(self, data_y, data_x=None ):
+    def run(self):
         e = self.randomArithmeticExpression()
         f = e[0]
 
-        for i in range(len(data_x)):
-            func = f(data_x[i])
-            pyro.sample('f_{}'.format(i), dist.Normal(data_y[i], 5), obs=func)
+        for i in range(len(self.data)):
+            x_i, y_i = self.data[i]
+            func = f(x_i)
+            pyro.sample('f_{}'.format(i), dist.Normal(y_i, 5), obs=func)
 
         print(e)
         print(e[1])
@@ -62,8 +69,7 @@ class SR_Model:
 
     @classmethod
     def create_from_file(cls, filename):
-        data_x = []
-        data_y = []
+        data= []
         file = open(filename, 'r')
         lines = file.readlines()
 
@@ -72,12 +78,12 @@ class SR_Model:
             x = int(pair[0])
             y = int(pair[1])
 
-            data_x.append(x)
-            data_y.append(y)
+            data.append((x,y))
 
-        return data_x, data_y
+        return SR_Model(data)
 
 
-data_x, data_y = SR_Model.create_from_file("../data/sir.data")
-sr = SR_Model()
-sr.run(data_y, data_x)
+
+sr = SR_Model.create_from_file("../data/sir.data")
+sr.run()
+
