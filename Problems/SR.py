@@ -22,19 +22,13 @@ class SR_Model:
 
     @name_count
     def randomConstantFunction(self):
-        tensor = pyro.sample("c", dist.Multinomial(1, torch.from_numpy(np.arange(10))))
-        c = 0
-        for i in range(10):
-            if tensor[i] == 1:
-                c = i
+        c = pyro.sample("c", dist.Categorical(torch.from_numpy(np.ones(10))))
+        c = c.item()
         return lambda x: c, str(c)
 
     def randomCombination(self, f, g):
-        tensor = pyro.sample("binaryOps", dist.Multinomial(1, torch.from_numpy(np.arange(5))))
-        index = 0
-        for i in range(5):
-            if tensor[i] == 1:
-                index = i
+        index = pyro.sample("binaryOps", dist.Categorical(torch.from_numpy(np.ones(5))))
+        index = index.item()
         op = self.binaryOps[index]
         opfn = op[0]
         ffn = f[0]
@@ -81,7 +75,6 @@ class SR_Model:
             data.append((x,y))
 
         return SR_Model(data)
-
 
 
 sr = SR_Model.create_from_file("../data/sir.data")
