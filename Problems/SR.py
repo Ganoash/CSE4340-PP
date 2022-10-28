@@ -6,6 +6,7 @@ import pyro
 from pyro.contrib.autoname import name_count
 import logging
 import pyro.primitives as prim
+from pyro.infer import config_enumerate
 
 
 class SR_Model:
@@ -26,6 +27,7 @@ class SR_Model:
         c = c.item()
         return lambda x: c, str(c)
 
+    @name_count
     def randomCombination(self, f, g):
         index = pyro.sample("binaryOps", dist.Categorical(torch.from_numpy(np.ones(5))))
         index = index.item()
@@ -34,7 +36,12 @@ class SR_Model:
         ffn = f[0]
         gfn = g[0]
 
-        return lambda x: opfn(ffn(x), gfn(x)), "(" + op[1] + " " + f[1] + " " + g[1] + ")"
+        ret = None
+        try:
+            ret = lambda x: opfn(ffn(x), gfn(x)), "(" + op[1] + " " + f[1] + " " + g[1] + ")"
+        except ZeroDivisionError:
+            ret = self.randomCombination(self, f, g)
+        return ret
 
     def randomArithmeticExpression(self):
         with name_count():
@@ -74,9 +81,26 @@ class SR_Model:
 
             data.append((x,y))
 
-        return SR_Model(data)
+        return SR_Model(data), len(data)
 
 
-sr = SR_Model.create_from_file("../data/sir.data")
-sr.run()
+sr, data_length = SR_Model.create_from_file("../data/sir.data")
 
+auto_guide = pyro.infer.autoguide.AutoDelta(pyro.poutine.block(sr.run, hide=["c"] + ["binaryOps"] + ['d1'] + ['d2']))
+adam = pyro.optim.Adam({"lr": 0.05})
+elbo = pyro.infer.TraceEnum_ELBO()
+elbo.loss(sr.run, auto_guide)
+
+svi = pyro.infer.SVI(sr.run, auto_guide, adam, loss=elbo)
+
+losses = []
+for step in range(200):
+    loss = svi.step()
+    losses.append(loss)
+    if step % 100 == 0:
+        print("Elbo loss: {}".format(loss))
+
+predictive = pyro.infer.Predictive(sr.run, guide=auto_guide, num_samples=100)
+
+print(losses)
+print(auto_guide.median())
