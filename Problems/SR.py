@@ -11,7 +11,7 @@ from pyro.infer import config_enumerate
 
 class SR_Model:
 
-    def __init__(self, data):
+    def __init__(self):
         self.plus = lambda a, b: a + b, '+'
         self.multiply = lambda a, b: round(a*b,0), '*'
         self.divide = lambda a, b: round(a/b, 0), '/'
@@ -19,15 +19,13 @@ class SR_Model:
         self.power = lambda a, b: math.pow(a,b), '**'
         self.binaryOps = [self.plus, self.multiply, self.divide, self.minus, self.power]
         self.identity = lambda x: x, 'x'
-        self.data = data
+        self.rec_depth = 0
 
-    @name_count
     def randomConstantFunction(self):
         c = pyro.sample("c", dist.Categorical(torch.from_numpy(np.ones(10))))
         c = c.item()
         return lambda x: c, str(c)
 
-    @name_count
     def randomCombination(self, f, g):
         index = pyro.sample("binaryOps", dist.Categorical(torch.from_numpy(np.ones(5))))
         index = index.item()
@@ -36,36 +34,45 @@ class SR_Model:
         ffn = f[0]
         gfn = g[0]
 
-        ret = None
-        try:
-            ret = lambda x: opfn(ffn(x), gfn(x)), "(" + op[1] + " " + f[1] + " " + g[1] + ")"
-        except ZeroDivisionError:
-            ret = self.randomCombination(self, f, g)
-        return ret
+        return lambda x: opfn(ffn(x), gfn(x)), "(" + op[1] + " " + f[1] + " " + g[1] + ")"
 
     def randomArithmeticExpression(self):
-        with name_count():
-            d1 = pyro.sample('d1', dist.Bernoulli(probs=torch.tensor([0.5])))
-            if d1 == 1:
-                return self.randomCombination(self.randomArithmeticExpression(), self.randomArithmeticExpression())
+        d1 = pyro.sample('d1', dist.Bernoulli(probs=torch.tensor([0.5])))
+        # We have to limit the recursive depth, otherwise it can get stuck
+        if d1 == 1 and self.rec_depth < 1000:
+            self.rec_depth += 1
+            return self.randomCombination(self.randomArithmeticExpression(), self.randomArithmeticExpression())
+        else:
+            d2 = pyro.sample('d2', dist.Bernoulli(probs=torch.tensor([0.5])))
+            if d2 == 1:
+                return self.identity
             else:
-                d2 = pyro.sample('d2', dist.Bernoulli(probs=torch.tensor([0.5])))
-                if d2 == 1:
-                    return self.identity
-                else:
-                    return self.randomConstantFunction()
+                return self.randomConstantFunction()
 
-    def run(self):
+    @name_count
+    def run(self, data):
+        self.rec_depth = 0
+        self.data = data
         e = self.randomArithmeticExpression()
         f = e[0]
 
-        for i in range(len(self.data)):
+        # We need to limit how often it can try again, otherwise it will get stuck in a loop.
+        count = 0
+        i = 0
+        while i < len(self.data):
+            if count >= 10:
+                print("Had to limit the retries")
+                e = self.identity
             x_i, y_i = self.data[i]
-            func = f(x_i)
-            pyro.sample('f_{}'.format(i), dist.Normal(y_i, 5), obs=func)
-
-        print(e)
-        print(e[1])
+            i += 1
+            try:
+                val_func = f(x_i)
+                pyro.sample('f_{}'.format(i), dist.Normal(torch.tensor(y_i), 5), obs=torch.tensor(val_func))
+            except:
+                e = self.randomArithmeticExpression()
+                f = e[0]
+                i = 0
+        count += 1
         return e[1]
 
     @classmethod
@@ -81,26 +88,44 @@ class SR_Model:
 
             data.append((x,y))
 
-        return SR_Model(data), len(data)
+        return data
 
 
-sr, data_length = SR_Model.create_from_file("../data/sir.data")
+data = SR_Model.create_from_file("../data/sr.data")
+sr = SR_Model()
 
-auto_guide = pyro.infer.autoguide.AutoDelta(pyro.poutine.block(sr.run, hide=["c"] + ["binaryOps"] + ['d1'] + ['d2']))
-adam = pyro.optim.Adam({"lr": 0.05})
-elbo = pyro.infer.TraceEnum_ELBO()
-elbo.loss(sr.run, auto_guide)
+importance = pyro.infer.Importance(sr.run, guide=None, num_samples=1000)
 
-svi = pyro.infer.SVI(sr.run, auto_guide, adam, loss=elbo)
+print("Starting importance sampling")
+out = importance.run(data)
 
-losses = []
-for step in range(200):
-    loss = svi.step()
-    losses.append(loss)
-    if step % 100 == 0:
-        print("Elbo loss: {}".format(loss))
+normalized = out.get_normalized_weights()
+weights = []
+for i in normalized:
+    weights.append(i.item())
+values = []
+for i in out.exec_traces:
+    values.append(i.nodes["_RETURN"]["value"])
 
-predictive = pyro.infer.Predictive(sr.run, guide=auto_guide, num_samples=100)
+combined = zip(weights, values)
 
-print(losses)
-print(auto_guide.median())
+sort = sorted(combined, key=lambda x: x[0], reverse=True)
+
+count = 0
+result = []
+flag1 = False
+flag2 = False
+for i in sort:
+    print(i)
+    if i[1] == "(* x 3)":
+        flag1 = True
+    if i[1] == "(* 3 x)":
+        flag2 = True
+    if i[1] not in result and count < 5:
+        result.append(i[1])
+        count += 1
+
+
+for i in result:
+    print(i)
+print("flag1: ", flag1, " flag2: ", flag2)
