@@ -1,7 +1,6 @@
 from deformation import calc_deformation
 import utils
 import numpy
-import logging
 import torch
 
 import pyro
@@ -33,8 +32,26 @@ class GeoModel:
         aligned_deformation = torch.FloatTensor(
             numpy.interp(self.reference_times, interp_times, defm))
 
-        prim.sample(name="data", fn=dist.Normal(self.observed_deformations, 2),
-                    obs=aligned_deformation)
+        for i in pyro.plate("data_loop", len(self.observed_deformations)):
+            prim.sample(name="data_{}".format(i),
+                        fn=dist.Normal(self.observed_deformations[i], 2),
+                        obs=aligned_deformation[i])
+
+    def guide(self):
+        kv = prim.sample(name="kv", fn=dist.Cauchy(loc=-5, scale=3)).item()
+        sskv = prim.sample(name="sskv",
+                           fn=dist.Cauchy(loc=-3.5, scale=3)).item()
+        sske = prim.sample(name="sske", fn=dist.Cauchy(loc=-5, scale=3)).item()
+        nclay = utils.sample_from_discrete_uniform(name="nclay",
+                                                   values=list(range(5, 11)))
+        claythick = 5
+        interp_times, defm, heads, defm_v = calc_deformation(
+            time=self.reference_times, head=self.heads, Kv=10**kv,
+            Sskv=10**sskv, Sske=10**sske, claythick=claythick,
+            nclay=nclay)
+
+        aligned_deformation = torch.FloatTensor(
+            numpy.interp(self.reference_times, interp_times, defm))
 
 
 def read_from_file(file_location: str):
@@ -57,30 +74,3 @@ def read_from_file(file_location: str):
                            " were expected to have the same length but they"
                            " didn't.")
     return heads, reference_times, observed_deformations
-
-
-if __name__ == "__main__":
-    # read (from stdin) the location of the input file
-    file_location = input()
-
-    # load the observations from the input file
-    heads, reference_times, observed_deformations = read_from_file(
-        file_location)
-
-    # initialize the model
-    model = GeoModel(heads, reference_times, observed_deformations)
-
-    # perform inference
-    auto_guide = pyro.infer.autoguide.AutoNormal(
-        pyro.poutine.block(model.model, hide=['nclay']))
-    adam = pyro.optim.Adam({"lr": 0.02})  # Consider decreasing learning rate.
-    elbo = pyro.infer.Trace_ELBO()
-    svi = pyro.infer.SVI(model.model, auto_guide, adam, elbo)
-
-    losses = []
-    for step in range(10):
-        loss = svi.step()
-        losses.append(loss)
-        if step % 100 == 0:
-            logging.info("Elbo loss: {}".format(loss))
-    print(losses)
