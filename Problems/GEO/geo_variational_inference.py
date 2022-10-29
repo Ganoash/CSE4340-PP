@@ -1,9 +1,9 @@
-from geo import GeoModel, read_from_file
+from .geo import GeoModel, read_from_file
 
 import pyro
 
 
-if __name__ == "__main__":
+def run():
     # read (from stdin) the location of the input file
     print("[input]: Please enter the relative path to the input file...")
     file_location = input()

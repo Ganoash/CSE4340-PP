@@ -1,5 +1,5 @@
-from deformation import calc_deformation
-import utils
+from .deformation import calc_deformation
+from .utils import sample_from_discrete_uniform
 import numpy
 import torch
 
@@ -21,8 +21,8 @@ class GeoModel:
         sskv = prim.sample(name="sskv",
                            fn=dist.Cauchy(loc=-3.5, scale=3)).item()
         sske = prim.sample(name="sske", fn=dist.Cauchy(loc=-5, scale=3)).item()
-        nclay = utils.sample_from_discrete_uniform(name="nclay",
-                                                   values=list(range(5, 11)))
+        nclay = sample_from_discrete_uniform(name="nclay",
+                                             values=list(range(5, 11)))
         claythick = 5
         interp_times, defm, heads, defm_v = calc_deformation(
             time=self.reference_times, head=self.heads, Kv=10**kv,
@@ -36,22 +36,6 @@ class GeoModel:
             prim.sample(name="data_{}".format(i),
                         fn=dist.Normal(self.observed_deformations[i], 2),
                         obs=aligned_deformation[i])
-
-    def guide(self):
-        kv = prim.sample(name="kv", fn=dist.Cauchy(loc=-5, scale=3)).item()
-        sskv = prim.sample(name="sskv",
-                           fn=dist.Cauchy(loc=-3.5, scale=3)).item()
-        sske = prim.sample(name="sske", fn=dist.Cauchy(loc=-5, scale=3)).item()
-        nclay = utils.sample_from_discrete_uniform(name="nclay",
-                                                   values=list(range(5, 11)))
-        claythick = 5
-        interp_times, defm, heads, defm_v = calc_deformation(
-            time=self.reference_times, head=self.heads, Kv=10**kv,
-            Sskv=10**sskv, Sske=10**sske, claythick=claythick,
-            nclay=nclay)
-
-        aligned_deformation = torch.FloatTensor(
-            numpy.interp(self.reference_times, interp_times, defm))
 
 
 def read_from_file(file_location: str):
