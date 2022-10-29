@@ -8,3 +8,6 @@ Steps taken:
 4. Tried to make SVI work, because online there are sources that can make it work with the discrete variables and it also works for the other models. 
    1. Cannot make it work because I do not know how to hide the variables that have different name_counts each trace.
 5. Currently trying to make importance sampling work, as that should work with this model.
+   1. Importance sampling now works. A few different numbers of samples were tried. 
+      1. To check if it worked 10-100. Everything under 100 is not able to find the exact formula, but is usually very close (think (* x 2) or (+ x x) instead of (* x 3)).
+      2. To see if it finds a correct formula 500. With 500 samples it was able to find the exact formula, and a different one which results in the same answers. 
