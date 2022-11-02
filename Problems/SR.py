@@ -4,8 +4,7 @@ import torch
 import math
 import pyro
 from pyro.contrib.autoname import name_count
-import logging
-import pyro.primitives as prim
+import sys
 from pyro.infer import config_enumerate
 
 
@@ -39,7 +38,7 @@ class SR_Model:
     def randomArithmeticExpression(self):
         d1 = pyro.sample('d1', dist.Bernoulli(probs=torch.tensor([0.5])))
         # We have to limit the recursive depth, otherwise it can get stuck
-        if d1 == 1 and self.rec_depth < 1000:
+        if d1 == 1 and self.rec_depth < 100:
             self.rec_depth += 1
             return self.randomCombination(self.randomArithmeticExpression(), self.randomArithmeticExpression())
         else:
@@ -61,7 +60,6 @@ class SR_Model:
         i = 0
         while i < len(self.data):
             if count >= 10:
-                print("Had to limit the retries")
                 e = self.identity
             x_i, y_i = self.data[i]
             i += 1
@@ -69,10 +67,12 @@ class SR_Model:
                 val_func = f(x_i)
                 pyro.sample('f_{}'.format(i), dist.Normal(torch.tensor(y_i), 5), obs=torch.tensor(val_func))
             except:
+                self.rec_depth = 0
                 e = self.randomArithmeticExpression()
                 f = e[0]
                 i = 0
         count += 1
+
         return e[1]
 
     @classmethod
@@ -83,49 +83,46 @@ class SR_Model:
 
         for line in lines:
             pair = line.split(" ")
-            x = int(pair[0])
-            y = int(pair[1])
+            x = float(pair[0])
+            y = float(pair[1])
 
             data.append((x,y))
 
         return data
 
 
-data = SR_Model.create_from_file("../data/sr.data")
-sr = SR_Model()
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    file = args[0]
+    samples = args[1]
+    data = SR_Model.create_from_file(str(file))
+    sr = SR_Model()
 
-importance = pyro.infer.Importance(sr.run, guide=None, num_samples=1000)
+    importance = pyro.infer.Importance(sr.run, guide=None, num_samples=int(samples))
 
-print("Starting importance sampling")
-out = importance.run(data)
+    out = importance.run(data)
 
-normalized = out.get_normalized_weights()
-weights = []
-for i in normalized:
-    weights.append(i.item())
-values = []
-for i in out.exec_traces:
-    values.append(i.nodes["_RETURN"]["value"])
+    normalized = out.get_normalized_weights()
+    weights = []
+    for i in normalized:
+        weights.append(i.item())
+    values = []
+    for i in out.exec_traces:
+        values.append(i.nodes["_RETURN"]["value"])
 
-combined = zip(weights, values)
+    combined = zip(weights, values)
 
-sort = sorted(combined, key=lambda x: x[0], reverse=True)
+    sort = sorted(combined, key=lambda x: x[0], reverse=True)
 
-count = 0
-result = []
-flag1 = False
-flag2 = False
-for i in sort:
-    print(i)
-    if i[1] == "(* x 3)":
-        flag1 = True
-    if i[1] == "(* 3 x)":
-        flag2 = True
-    if i[1] not in result and count < 5:
-        result.append(i[1])
-        count += 1
+    count = 0
+    result = []
+    flag1 = False
+    for i in sort:
+        if count >= 5:
+            break
+        if i[1] not in result and count < 5:
+            result.append(i[1])
+            count += 1
 
-
-for i in result:
-    print(i)
-print("flag1: ", flag1, " flag2: ", flag2)
+    for i in result:
+        print(i)
