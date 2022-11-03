@@ -2,6 +2,8 @@
 Steps taken:
 1. Create model by translating the given model to Pyro.
    1. A big issue for making this model work is the fact that we branch on the Bernoulli samples. Therefore, the support is not equal for each trace.  
+   2. Because theoretically the recursive depth for the model could be infinite, we had to add a maximum depth for the recursion. 
+   3. Because a generated function can be impossible (e.g. division by 0), the model is allowed to regenerate a function up to 10 times. After that it just returns the identity funciton. 
 2. Tried to make NUTS work, but this did not work because of the discrete variables.
 3. Tried to make HMC work before figuring out that NUTS did not work because of the discrete variables. Therefore failed because of the same reasons.
    1. Online sources state that NUTS/HMC should be able to work using enumeration, but I run into problems because of the branching on Bernoulli samples. These should be taken out, but I do not know how that would be possible. 
