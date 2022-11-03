@@ -12,4 +12,4 @@ Steps taken:
    2. A few different numbers of samples were tried. 
       1. To check if it worked 10-100. Everything under 100 is not able to find the exact formula, but is usually very close (think (* x 2) or (+ x x) instead of (* x 3)).
       2. To see if it finds a correct formula 500. With 500 samples it was able to find the exact formula for easy formulas (like (* x 3), and a different one which results in the same answers. 
-      3. Tried 5000 and 10000, neither finds more difficult (nested) formulas exactly. While they both find the correct operators most of the time, they do not always find the correct numbers to use with these operators (think (* (/ x 9) 5) instead of (* (/ x 5) 3)). 10000 takes too long, so settled on 5000.
+      3. Tried 5000 and 10000, neither finds more difficult (nested) formulas exactly. While they both find the correct operators most of the time, they do not always find the correct numbers to use with these operators (think (* (/ x 9) 5) instead of (* (/ x 5) 3)). 10000 takes too long.
