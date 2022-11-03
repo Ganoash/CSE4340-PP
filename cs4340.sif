@@ -1,13 +1,6 @@
-BootStrap: library
-From: ubuntu:16.04
+BootStrap: docker
+From: python:3.9.15
 
 %post
     apt-get -y update
-    apt-get -y install fortune cowsay lolcat
-
-%environment
-    export LC_ALL=C
-    export PATH=/usr/games:$PATH
-
-%runscript
-    lolcat
+    python -m pip install pyro-ppl==1.8.2
