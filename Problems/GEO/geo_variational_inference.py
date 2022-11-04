@@ -1,15 +1,14 @@
-from .geo import GeoModel, read_from_file
+import sys
+
+from geo import GeoModel, read_from_file
 
 import pyro
 
 
 def run():
     # read (from stdin) the location of the input file
-    print("[input]: Please enter the relative path to the input file...")
-    file_location = input()
-
-    print("[input]: Please enter the number of steps...")
-    num_of_steps = int(input())
+    _, file_location, num_of_steps, *_ = sys.argv
+    num_of_steps = int(num_of_steps)
 
     # load the observations from the input file
     heads, reference_times, observed_deformations = read_from_file(

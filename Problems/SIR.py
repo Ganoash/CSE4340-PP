@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import pyro
+import sys
 import pyro.primitives as prim
 from pyro.infer.discrete import TraceEnumSample_ELBO, TraceEnum_ELBO
 from pyro.infer import config_enumerate, infer_discrete
@@ -89,24 +90,29 @@ class Sir_Model:
             observations.append(obs)
         return Sir_Model(observations, time_steps=len(observations))
 
-sir = Sir_Model.create_from_file("../data/run.data")
-torch.set_default_dtype(torch.float64)
-auto_guide = pyro.infer.autoguide.AutoDelta(
-    pyro.poutine.block(sir.run, hide=["tau"] + [f"s2i_{t}" for t in range(60)] + [f"i2r_{t}" for t in range(60)]))
-adam = pyro.optim.Adam({"lr": 0.05})  # Consider decreasing learning rate.
-elbo = TraceEnum_ELBO()
-elbo.loss(sir.run, auto_guide)
-svi = pyro.infer.SVI(sir.run, auto_guide, adam, loss=elbo)
 
-losses = []
-for step in range(200):
-    loss = svi.step()
-    losses.append(loss)
-    if step % 100 == 0:
-        print("Elbo loss: {}".format(loss))
+if __name__ == '__main__':
+    _, file_location, num_of_steps, *_ = sys.argv
+    num_of_steps = int(num_of_steps)
 
-predictive = pyro.infer.Predictive(sir.run, guide=auto_guide, num_samples=100)
-tau_guess = predictive()["tau"].mode()[0] + 2
-print(tau_guess)
-print(losses)
-print(auto_guide.median())
+    sir = Sir_Model.create_from_file(file_location)
+    torch.set_default_dtype(torch.float64)
+    auto_guide = pyro.infer.autoguide.AutoDelta(
+        pyro.poutine.block(sir.run, hide=["tau"] + [f"s2i_{t}" for t in range(60)] + [f"i2r_{t}" for t in range(60)]))
+    adam = pyro.optim.Adam({"lr": 0.05})  # Consider decreasing learning rate.
+    elbo = TraceEnum_ELBO()
+    elbo.loss(sir.run, auto_guide)
+    svi = pyro.infer.SVI(sir.run, auto_guide, adam, loss=elbo)
+
+    losses = []
+    for step in range(num_of_steps):
+        loss = svi.step()
+        losses.append(loss)
+
+    predictive = pyro.infer.Predictive(sir.run, guide=auto_guide, num_samples=100)
+    tau_guess = predictive()["tau"].mode()[0] + 2
+    print("   ", f"tau: {tau_guess}")
+    for key, val in auto_guide.median().items():
+        if "beta" not in key:
+            print("   ", key + ":", val.item())
+

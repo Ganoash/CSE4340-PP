@@ -1,5 +1,5 @@
-from .deformation import calc_deformation
-from .utils import sample_from_discrete_uniform
+from deformation import calc_deformation
+from utils import sample_from_discrete_uniform
 import numpy
 import torch
 

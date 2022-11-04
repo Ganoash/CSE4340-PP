@@ -1,0 +1,6 @@
+## SIR model
+Various attempts were made to get this model to work within pyro. A first attempt was made using the pyro built in [compartment model](https://docs.pyro.ai/en/stable/contrib.epidemiology.html), however this compartment model did not play well with the discrete variables in the global model (Tau mainly). The compartment module rewrites the SIR model to a form of HMM which simplifies inference over the large amount of discrete variables.
+
+A second attempt of getting inference working was done using a custom model. First of all we used MCMC methods for generating estimators, however this led to 2 problems: Discrete Variables are enumerated away, so we cannot get an estimator for these using MCMC. Secondly MCMC samples led to Very High variance solutions.
+
+To fix the issues with discrete latents and high variance we decided to switch to Variational Inference. By fitting a guide to the posterior we can estimate the latents using gradients ascent, and then estimate the most likely value for tau by drawing from the guide.
