@@ -24,7 +24,7 @@ class GeoModel:
         nclay = sample_from_discrete_uniform(name="nclay",
                                              values=list(range(5, 11)))
         claythick = 5
-        interp_times, defm, heads, defm_v = calc_deformation(
+        interp_times, defm, _, _ = calc_deformation(
             time=self.reference_times, head=self.heads, Kv=10**kv,
             Sskv=10**sskv, Sske=10**sske, claythick=claythick,
             nclay=nclay)

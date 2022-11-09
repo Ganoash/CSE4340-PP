@@ -25,7 +25,7 @@ def run():
     svi = pyro.infer.SVI(model.model, auto_guide, adam, elbo)
 
     losses = []
-    for step in range(num_of_steps):
+    for _ in range(num_of_steps):
         loss = svi.step()
         losses.append(loss)
 
