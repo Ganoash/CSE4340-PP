@@ -1,6 +1,6 @@
 import sys
 
-from geo import GeoModel, read_from_file
+from .geo import GeoModel, read_from_file
 
 import pyro
 

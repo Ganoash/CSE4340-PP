@@ -1,5 +1,5 @@
-from deformation import calc_deformation
-from utils import sample_from_discrete_uniform
+from .deformation import calc_deformation
+from .utils import sample_from_discrete_uniform
 import numpy
 import torch
 
@@ -36,6 +36,8 @@ class GeoModel:
             prim.sample(name="data_{}".format(i),
                         fn=dist.Normal(self.observed_deformations[i], 2),
                         obs=aligned_deformation[i])
+
+        return kv, sskv, sske, nclay
 
 
 def read_from_file(file_location: str):

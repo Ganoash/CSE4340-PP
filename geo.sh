@@ -1,3 +1,3 @@
 #!/bin/bash
 
-python geo_script.py $1 $2
+python $( dirname -- "$0"; )/geo_script.py $1 $2
