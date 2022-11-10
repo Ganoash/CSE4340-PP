@@ -39,6 +39,28 @@ class GeoModel:
 
         return kv, sskv, sske, nclay
 
+    def model_importance_sampling(self, observed_deformations):
+        kv = prim.sample(name="kv", fn=dist.Cauchy(loc=-5, scale=3)).item()
+        sskv = prim.sample(name="sskv",
+                           fn=dist.Cauchy(loc=-3.5, scale=3)).item()
+        sske = prim.sample(name="sske", fn=dist.Cauchy(loc=-5, scale=3)).item()
+        # print(kv, sskv, sske)
+        nclay = sample_from_discrete_uniform(name="nclay",
+                                             values=list(range(5, 11)))
+        interp_times, defm, _, _ = calc_deformation(
+            time=self.reference_times, head=self.heads, Kv=10**kv,
+            Sskv=10**sskv, Sske=10**sske, claythick=5, nclay=nclay)
+
+        aligned_deformation = torch.FloatTensor(
+            numpy.interp(self.reference_times, interp_times, defm))
+
+        for i in pyro.plate("data_loop", len(observed_deformations)):
+            prim.sample(name="data_{}".format(i),
+                        fn=dist.Normal(observed_deformations[i], 2),
+                        obs=aligned_deformation[i])
+
+        return kv, sskv, sske, nclay
+
 
 def read_from_file(file_location: str):
     """Read the input data from the given file
