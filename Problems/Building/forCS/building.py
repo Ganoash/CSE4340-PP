@@ -493,15 +493,15 @@ def create_from_file(filename):
     for line in lines:
         if count == 0:
             muA = float(line)
-        if count == 1:
+        elif count == 1:
             muB = float(line)
-        if count == 2:
+        elif count == 2:
             noise = float(line)
         else:
             s = line.split(" ")
             observation = []
             for i in range(6):
-                observation.append(i)
+                observation.append(float(s[i]))
             observations.append(observation)
         count += 1
     return muA, muB, noise, observations
