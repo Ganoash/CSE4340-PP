@@ -11,3 +11,5 @@ To create this table each method was ran with 5 steps, before replacing the line
 
 Because both 500 and 100 performed relatively closely we chose to take 1000 samples, as to hopefully have a more accurate result. 
 The table shows that the variational inference is significantly faster.
+
+To calculate the estimate of muA and muB, we take the trace that is the output of the final step. From this trace we take 1000 samples. Then we calculate the mean for muA and muB from these samples.
