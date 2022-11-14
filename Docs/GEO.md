@@ -17,7 +17,7 @@ On top of that, Pyro also offers an API (`AutoGuide`) for automatically generati
 We noticed that a last minute change in the `geo.sh` script (right before our first submission) introduced a Python module error when executing the code for "Geological Structures". We added a small fix-up commit that kills the error. Below, you can see the ID of the commit that fixes the error:
 - `0edb8477e05f4a3f87a31b307761852a22a4917d`
 
-### 3rd Submission
+### 3rd Submission (14/11/22)
 
 For our next iteration for the "Geological Structures" model we used **_Importance Sampling_**.
 
